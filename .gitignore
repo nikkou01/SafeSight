@@ -1,0 +1,19 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/release/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local model and CCTV test artifacts
+backend/models/*.pt
+!backend/models/best.pt
+tools/CCTV/myvenv/
