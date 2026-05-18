@@ -164,7 +164,7 @@ export default function CameraLocations({ user, notify, onNavigate }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 min-h-[calc(103vh-200px)]">
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 px-5 py-4 flex items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-medium text-gray-900">Camera Location Map</h3>
@@ -198,8 +198,8 @@ export default function CameraLocations({ user, notify, onNavigate }) {
       </div>
 
       {mode === 'assign' ? (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 space-y-4">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 flex-1 min-h-0">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 space-y-4 h-full">
             <div>
               <h3 className="text-lg font-medium text-gray-900">Assign Camera Pinpoint</h3>
               <p className="text-sm text-gray-600 mt-1">
@@ -281,12 +281,12 @@ export default function CameraLocations({ user, notify, onNavigate }) {
             )}
           </div>
 
-          <div className="xl:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          <div className="xl:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
             <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-medium text-gray-900">Camera Location Map</h3>
               <span className="text-xs text-gray-500">Pinned cameras: {pinnedCameras.length}</span>
             </div>
-            <div className="h-[560px]">
+            <div className="flex-1 min-h-0">
               <MapContainer center={mapCenter} zoom={13} scrollWheelZoom className="h-full w-full">
                 <RecenterMap center={mapCenter} />
                 <MapClickSelector
@@ -345,74 +345,76 @@ export default function CameraLocations({ user, notify, onNavigate }) {
           </div>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="text-lg font-medium text-gray-900">Assigned CCTV Locations</h3>
-            <span className="text-xs text-gray-500">Pinned cameras: {pinnedCameras.length}</span>
-          </div>
-          <div className="h-[620px]">
-            <MapContainer center={mapCenter} zoom={13} scrollWheelZoom className="h-full w-full">
-              <RecenterMap center={mapCenter} />
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 flex-1 min-h-0">
+          <div className="xl:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900">Assigned CCTV Locations</h3>
+              <span className="text-xs text-gray-500">Pinned cameras: {pinnedCameras.length}</span>
+            </div>
+            <div className="flex-1 min-h-0">
+              <MapContainer center={mapCenter} zoom={13} scrollWheelZoom className="h-full w-full">
+                <RecenterMap center={mapCenter} />
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
 
-              {pinnedCameras.map(cam => (
-                <Marker
-                  key={cam.id}
-                  position={[cam.map_latitude, cam.map_longitude]}
-                  icon={PINNED_CAMERA_ICON}
-                  eventHandlers={{
-                    click: () => openCameraLiveFeed(cam.id),
-                  }}
-                >
-                  <Tooltip permanent direction="top" offset={[0, -10]}>{cam.name}</Tooltip>
-                  <Popup>
-                    <div className="text-sm">
-                      <p className="font-semibold text-gray-900">{cam.name}</p>
-                      <p className="text-gray-600">{cam.location}</p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {cam.map_latitude.toFixed(6)}, {cam.map_longitude.toFixed(6)}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => openCameraLiveFeed(cam.id)}
-                        className="mt-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
-                      >
-                        Open Live Feed
-                      </button>
+                {pinnedCameras.map(cam => (
+                  <Marker
+                    key={cam.id}
+                    position={[cam.map_latitude, cam.map_longitude]}
+                    icon={PINNED_CAMERA_ICON}
+                    eventHandlers={{
+                      click: () => openCameraLiveFeed(cam.id),
+                    }}
+                  >
+                    <Tooltip permanent direction="top" offset={[0, -10]}>{cam.name}</Tooltip>
+                    <Popup>
+                      <div className="text-sm">
+                        <p className="font-semibold text-gray-900">{cam.name}</p>
+                        <p className="text-gray-600">{cam.location}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {cam.map_latitude.toFixed(6)}, {cam.map_longitude.toFixed(6)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => openCameraLiveFeed(cam.id)}
+                          className="mt-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
+                        >
+                          Open Live Feed
+                        </button>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+              </MapContainer>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-full">
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-medium text-gray-900">Assigned Camera Locations</h3>
+            </div>
+            <div className="divide-y divide-gray-100 flex-1 overflow-y-auto">
+              {pinnedCameras.length === 0 ? (
+                <p className="px-5 py-6 text-sm text-gray-500">No camera pinpoints assigned yet.</p>
+              ) : (
+                pinnedCameras.map(cam => (
+                  <div key={cam.id} className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                      <p className="font-medium text-gray-900">{cam.name}</p>
+                      <p className="text-sm text-gray-600">{cam.location}</p>
                     </div>
-                  </Popup>
-                </Marker>
-              ))}
-            </MapContainer>
+                    <p className="text-sm text-gray-500">
+                      {cam.map_latitude.toFixed(6)}, {cam.map_longitude.toFixed(6)}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
-
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-5 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Assigned Camera Locations</h3>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {pinnedCameras.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-gray-500">No camera pinpoints assigned yet.</p>
-          ) : (
-            pinnedCameras.map(cam => (
-              <div key={cam.id} className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                  <p className="font-medium text-gray-900">{cam.name}</p>
-                  <p className="text-sm text-gray-600">{cam.location}</p>
-                </div>
-                <p className="text-sm text-gray-500">
-                  {cam.map_latitude.toFixed(6)}, {cam.map_longitude.toFixed(6)}
-                </p>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   )
 }

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { fetchUsers, createUser, updateUser, deleteUser } from '../api'
 import useAutoRefresh from '../utils/useAutoRefresh'
 
-const EMPTY = { username: '', email: '', full_name: '', role: 'responder', phone_number: '', password: '' }
+const EMPTY = { username: '', email: '', full_name: '', phone_number: '', password: '' }
 
 export default function Users({ user: currentUser, notify }) {
   const [users,   setUsers]   = useState([])
@@ -11,6 +11,7 @@ export default function Users({ user: currentUser, notify }) {
   const [form,    setForm]    = useState(EMPTY)
   const [editId,  setEditId]  = useState(null)
   const [saving,  setSaving]  = useState(false)
+  const [statusActionId, setStatusActionId] = useState('')
 
   async function load(options = {}) {
     const background = !!options.background
@@ -27,7 +28,7 @@ export default function Users({ user: currentUser, notify }) {
 
   function openAdd()     { setForm(EMPTY); setEditId(null); setModal('add') }
   function openEdit(u)   { setForm({ username: u.username, email: u.email, full_name: u.full_name,
-    role: u.role, phone_number: u.phone_number, password: '' });
+    phone_number: u.phone_number, password: '' });
     setEditId(u.id); setModal('edit') }
   function closeModal()  { setModal(false); setEditId(null); setForm(EMPTY) }
 
@@ -55,8 +56,8 @@ export default function Users({ user: currentUser, notify }) {
       }
 
       if (modal === 'add') {
-        await createUser({ ...form, phone_number: normalizedPhone })
-        notify('User created.', 'success')
+        await createUser({ ...form, role: 'responder', phone_number: normalizedPhone })
+        notify('Responder created.', 'success')
       } else {
         const payload = { ...form, phone_number: normalizedPhone }
         if (!payload.password) delete payload.password
@@ -80,6 +81,23 @@ export default function Users({ user: currentUser, notify }) {
     }
   }
 
+  async function handleToggleActive(target) {
+    if (target.role !== 'responder') return
+    const nextState = !target.is_active
+    const verb = nextState ? 'Enable' : 'Disable'
+    if (!confirm(`${verb} this responder?`)) return
+    try {
+      setStatusActionId(target.id)
+      await updateUser(target.id, { is_active: nextState })
+      notify(`Responder ${nextState ? 'enabled' : 'disabled'}.`, 'success')
+      load()
+    } catch (err) {
+      notify(err?.response?.data?.detail || 'Failed to update responder status.', 'error')
+    } finally {
+      setStatusActionId('')
+    }
+  }
+
   function initials(name) {
     return (name || 'U').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
   }
@@ -91,7 +109,7 @@ export default function Users({ user: currentUser, notify }) {
           <h3 className="text-lg font-medium text-gray-900">User Management</h3>
           <button onClick={openAdd}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium">
-            <i className="fas fa-plus mr-2" />Add User
+            <i className="fas fa-plus mr-2" />Add Responder
           </button>
         </div>
 
@@ -125,11 +143,21 @@ export default function Users({ user: currentUser, notify }) {
                     <i className={`fas fa-circle text-xs`} />
                     <span>{u.is_active ? 'Active' : 'Inactive'}</span>
                   </span>
+                  {u.role === 'responder' && (
+                    <button
+                      onClick={() => handleToggleActive(u)}
+                      disabled={statusActionId === u.id}
+                      className={`px-3 py-1.5 text-white rounded text-xs disabled:opacity-60
+                        ${u.is_active ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                    >
+                      {statusActionId === u.id ? 'Updating...' : (u.is_active ? 'Disable' : 'Enable')}
+                    </button>
+                  )}
                   <button onClick={() => openEdit(u)}
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs">
                     Edit
                   </button>
-                  {u.id !== currentUser?.id && (
+                  {u.id !== currentUser?.id && u.role !== 'captain' && (
                     <button onClick={() => handleDelete(u.id)}
                       className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs">
                       Delete
@@ -148,7 +176,7 @@ export default function Users({ user: currentUser, notify }) {
           style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900">{modal === 'add' ? 'Add User' : 'Edit User'}</h3>
+              <h3 className="font-semibold text-gray-900">{modal === 'add' ? 'Add Responder' : 'Edit User'}</h3>
               <button onClick={closeModal}><i className="fas fa-times text-gray-400 hover:text-gray-600" /></button>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
@@ -167,14 +195,6 @@ export default function Users({ user: currentUser, notify }) {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
                 </div>
               ))}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400">
-                  <option value="responder">Responder</option>
-                  <option value="captain">Captain</option>
-                </select>
-              </div>
               <div className="flex space-x-3 pt-2">
                 <button type="button" onClick={closeModal}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm">Cancel</button>

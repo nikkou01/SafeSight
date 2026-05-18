@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -12,11 +12,14 @@ const BACKEND_HOST = '0.0.0.0';
 const BACKEND_PORT = 8000;
 const BACKEND_READY_RESOURCE = `http-get://${BACKEND_HOST}:${BACKEND_PORT}/docs`;
 const STARTUP_TIMEOUT_MS = 60000;
+const PRELOAD_PATH = path.join(__dirname, 'preload.cjs');
 
 let backendProcess = null;
 let frontendProcess = null;
 let mainWindow = null;
 let isShuttingDown = false;
+
+app.commandLine.appendSwitch('disable-popup-blocking');
 
 function getBackendDir() {
   if (app.isPackaged) {
@@ -182,7 +185,31 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      nativeWindowOpen: true,
+      preload: PRELOAD_PATH,
     },
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url === '' || url === 'about:blank' || url.startsWith(FRONTEND_URL)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1000,
+          height: 720,
+          autoHideMenuBar: true,
+          backgroundColor: '#ffffff',
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            preload: PRELOAD_PATH,
+          },
+        },
+      };
+    }
+
+    return { action: 'deny' };
   });
 
   mainWindow.once('ready-to-show', () => {
@@ -194,6 +221,26 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+function createPrintWindow(html) {
+  const printWindow = new BrowserWindow({
+    width: 1000,
+    height: 720,
+    title: `${APP_NAME} Print Report`,
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: PRELOAD_PATH,
+    },
+  });
+
+  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  printWindow.loadURL(dataUrl);
+  return printWindow;
 }
 
 function killChildProcess(child) {
@@ -269,6 +316,15 @@ app.whenReady().then(async () => {
     await shutdownServices();
     app.quit();
   }
+});
+
+ipcMain.handle('open-print-window', (event, html) => {
+  if (typeof html !== 'string' || !html.trim()) {
+    return false;
+  }
+
+  createPrintWindow(html);
+  return true;
 });
 
 app.on('before-quit', () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { fetchCollisions, getCollisionClipUrl, updateCollisionSeverity, updateCollisionStatus } from '../api/client'
+import { fetchCollisions, getCollisionClipUrl, updateCollisionSeverity, updateCollisionStatus, updateCollisionType } from '../api/client'
 import { REFRESH_INTERVAL_MS } from '../config'
 import RefreshLabel from '../components/RefreshLabel'
 import StatusPill from '../components/StatusPill'
@@ -9,6 +9,40 @@ import { colors, font, radius, shadows, spacing } from '../theme'
 
 const tabs = ['all', 'pending', 'acknowledged', 'responded', 'resolved']
 
+const collisionTypeOptions = [
+  { value: 'single_vehicle', label: 'Single-Vehicle' },
+  { value: 'rear_end', label: 'Rear-End' },
+  { value: 'head_on', label: 'Head-On' },
+  { value: 'side_impact', label: 'Side-Impact' },
+]
+
+const collisionTypeLabels = {
+  single_vehicle: 'Single-Vehicle',
+  rear_end: 'Rear-End',
+  head_on: 'Head-On',
+  side_impact: 'Side-Impact',
+  multi_vehicle: 'Multi-Vehicle',
+}
+
+function normalizeCollisionType(value) {
+  const rawValue = String(value || '').trim().toLowerCase()
+  if (!rawValue) return ''
+
+  if (['single-vehicle', 'single vehicle', 'single_vehicle'].includes(rawValue)) return 'single_vehicle'
+  if (['rear-end', 'rear end', 'rear_end'].includes(rawValue)) return 'rear_end'
+  if (['head-on', 'head on', 'head_on'].includes(rawValue)) return 'head_on'
+  if (['side-impact', 'side impact', 'side_impact'].includes(rawValue)) return 'side_impact'
+  if (['multi-vehicle', 'multi vehicle', 'multi_vehicle'].includes(rawValue)) return 'multi_vehicle'
+
+  return ''
+}
+
+function formatCollisionTypeLabel(value) {
+  const normalized = normalizeCollisionType(value)
+  if (!normalized) return 'unreviewed'
+  return collisionTypeLabels[normalized] || 'unreviewed'
+}
+
 export default function CollisionsScreen() {
   const [rows, setRows] = useState([])
   const [refreshing, setRefreshing] = useState(false)
@@ -16,6 +50,7 @@ export default function CollisionsScreen() {
   const [filter, setFilter] = useState('all')
   const [busyId, setBusyId] = useState('')
   const [severityBusyId, setSeverityBusyId] = useState('')
+  const [typeBusyId, setTypeBusyId] = useState('')
   const [reviewedIds, setReviewedIds] = useState([])
 
   async function load(background = false) {
@@ -73,6 +108,10 @@ export default function CollisionsScreen() {
   }
 
   async function setSeverity(id, level) {
+    if (!reviewedIds.includes(id)) {
+      Alert.alert('Review required', 'Review the clip before setting severity.')
+      return
+    }
     try {
       setSeverityBusyId(id)
       await updateCollisionSeverity(id, level)
@@ -81,6 +120,22 @@ export default function CollisionsScreen() {
       Alert.alert('Update failed', 'Could not update collision severity.')
     } finally {
       setSeverityBusyId('')
+    }
+  }
+
+  async function setCollisionType(id, nextType) {
+    if (!reviewedIds.includes(id)) {
+      Alert.alert('Review required', 'Review the clip before setting collision type.')
+      return
+    }
+    try {
+      setTypeBusyId(id)
+      await updateCollisionType(id, nextType)
+      await load(true)
+    } catch {
+      Alert.alert('Update failed', 'Could not update collision type.')
+    } finally {
+      setTypeBusyId('')
     }
   }
 
@@ -131,6 +186,11 @@ export default function CollisionsScreen() {
               <Text style={styles.severityValue}>{String(item.severity || 'unreviewed')}</Text>
             </View>
 
+            <View style={styles.typeRow}>
+              <Text style={styles.typeLabel}>Type</Text>
+              <Text style={styles.typeValue}>{formatCollisionTypeLabel(item.collision_type)}</Text>
+            </View>
+
             {(() => {
               const rawConfidence = item.confidence_score
               const confidence = Number(rawConfidence)
@@ -165,30 +225,54 @@ export default function CollisionsScreen() {
               />
 
               {reviewedIds.includes(item.id) ? (
-                <View style={styles.severityPicker}>
-                  {['low', 'medium', 'high'].map(level => {
-                    const isActive = String(item.severity || '') === level
-                    const isBusy = severityBusyId === item.id
-                    return (
-                      <TouchableOpacity
-                        key={level}
-                        onPress={() => setSeverity(item.id, level)}
-                        disabled={isBusy}
-                        style={[
-                          styles.severityChip,
-                          isActive ? styles.severityChipActive : styles.severityChipInactive,
-                          isBusy && styles.actionButtonDisabled,
-                        ]}
-                      >
-                        <Text style={[styles.severityChipText, isActive ? styles.severityChipTextActive : styles.severityChipTextInactive]}>
-                          {level}
-                        </Text>
-                      </TouchableOpacity>
-                    )
-                  })}
-                </View>
+                <>
+                  <View style={styles.severityPicker}>
+                    {['low', 'medium', 'high'].map(level => {
+                      const isActive = String(item.severity || '') === level
+                      const isBusy = severityBusyId === item.id
+                      return (
+                        <TouchableOpacity
+                          key={level}
+                          onPress={() => setSeverity(item.id, level)}
+                          disabled={isBusy}
+                          style={[
+                            styles.severityChip,
+                            isActive ? styles.severityChipActive : styles.severityChipInactive,
+                            isBusy && styles.actionButtonDisabled,
+                          ]}
+                        >
+                          <Text style={[styles.severityChipText, isActive ? styles.severityChipTextActive : styles.severityChipTextInactive]}>
+                            {level}
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    })}
+                  </View>
+                  <View style={styles.typePicker}>
+                    {collisionTypeOptions.map(option => {
+                      const isActive = normalizeCollisionType(item.collision_type) === option.value
+                      const isBusy = typeBusyId === item.id
+                      return (
+                        <TouchableOpacity
+                          key={option.value}
+                          onPress={() => setCollisionType(item.id, option.value)}
+                          disabled={isBusy}
+                          style={[
+                            styles.typeChip,
+                            isActive ? styles.typeChipActive : styles.typeChipInactive,
+                            isBusy && styles.actionButtonDisabled,
+                          ]}
+                        >
+                          <Text style={[styles.typeChipText, isActive ? styles.typeChipTextActive : styles.typeChipTextInactive]}>
+                            {option.label}
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    })}
+                  </View>
+                </>
               ) : (
-                <Text style={styles.reviewHint}>Review clip to set severity.</Text>
+                <Text style={styles.reviewHint}>Review clip to set severity and type.</Text>
               )}
 
               {item.status === 'pending' ? (
@@ -338,6 +422,24 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
     fontSize: 12,
   },
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: 4,
+  },
+  typeLabel: {
+    color: colors.inkMuted,
+    fontFamily: font.body,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  typeValue: {
+    color: colors.ink,
+    fontFamily: font.bodyMedium,
+    fontSize: 12,
+  },
   confidencePill: {
     alignSelf: 'flex-start',
     marginTop: 8,
@@ -395,6 +497,35 @@ const styles = StyleSheet.create({
     color: 'white',
   },
   severityChipTextInactive: {
+    color: colors.inkSoft,
+  },
+  typePicker: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    alignItems: 'center',
+  },
+  typeChip: {
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  typeChipActive: {
+    backgroundColor: colors.info,
+    borderColor: colors.info,
+  },
+  typeChipInactive: {
+    backgroundColor: colors.infoSoft,
+    borderColor: colors.border,
+  },
+  typeChipText: {
+    fontFamily: font.bodyMedium,
+    fontSize: 11,
+  },
+  typeChipTextActive: {
+    color: 'white',
+  },
+  typeChipTextInactive: {
     color: colors.inkSoft,
   },
   reviewHint: {

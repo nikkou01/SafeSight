@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { login, fetchMe, logout as apiLogout } from './api'
+import { login, fetchMe, logout as apiLogout, fetchCollisions } from './api'
 import { NotifProvider, useNotif } from './context/NotifContext'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
@@ -10,6 +10,7 @@ import Collisions from './pages/Collisions'
 import Users from './pages/Users'
 import Alerts from './pages/Alerts'
 import Analytics from './pages/Analytics'
+import useAutoRefresh from './utils/useAutoRefresh'
 
 // ── Login Page ────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
@@ -139,10 +140,24 @@ const PAGES = {
 const CAPTAIN_PAGES = ['dashboard', 'cameraDashboard', 'cameraLocations', 'cameras', 'collisions', 'users', 'alerts', 'analytics']
 const RESPONDER_PAGES = ['dashboard', 'cameraDashboard', 'cameraLocations', 'collisions', 'alerts', 'analytics']
 
+function normalizeCollisionType(value) {
+  const rawValue = String(value || '').trim().toLowerCase()
+  if (!rawValue) return ''
+
+  if (['single-vehicle', 'single vehicle', 'single_vehicle'].includes(rawValue)) return 'single_vehicle'
+  if (['rear-end', 'rear end', 'rear_end'].includes(rawValue)) return 'rear_end'
+  if (['head-on', 'head on', 'head_on'].includes(rawValue)) return 'head_on'
+  if (['side-impact', 'side impact', 'side_impact'].includes(rawValue)) return 'side_impact'
+  if (['multi-vehicle', 'multi vehicle', 'multi_vehicle'].includes(rawValue)) return 'multi_vehicle'
+
+  return ''
+}
+
 function Shell({ user, onLogout }) {
   const [page, setPage] = useState('dashboard')
   const [navigationState, setNavigationState] = useState({})
   const [now, setNow] = useState(() => new Date())
+  const [unreviewedCount, setUnreviewedCount] = useState(0)
   const notify = useNotif()
   const isCaptain = String(user?.role || '').toLowerCase() === 'captain'
   const allowedPages = isCaptain ? CAPTAIN_PAGES : RESPONDER_PAGES
@@ -165,6 +180,25 @@ function Shell({ user, onLogout }) {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  async function loadUnreviewedCounts() {
+    try {
+      const rows = await fetchCollisions()
+      const count = Array.isArray(rows)
+        ? rows.filter(c => {
+          const severity = String(c?.severity || '').toLowerCase()
+          const hasSeverity = ['low', 'medium', 'high'].includes(severity)
+          const hasType = !!normalizeCollisionType(c?.collision_type)
+          return !(hasSeverity || hasType)
+        }).length
+        : 0
+      setUnreviewedCount(count)
+    } catch {
+      // Keep the last known count if refresh fails.
+    }
+  }
+
+  useAutoRefresh(loadUnreviewedCounts, { intervalMs: 8000 })
 
   useEffect(() => {
     if (!allowedPages.includes(page)) setPage('dashboard')
@@ -196,6 +230,7 @@ function Shell({ user, onLogout }) {
         user={user}
         onLogout={onLogout}
         allowedPages={allowedPages}
+        unreviewedCount={unreviewedCount}
       />
       <div className="ml-64 h-screen min-w-0 overflow-y-auto">
         <div className="sticky top-0 z-20 border-b border-gray-200 bg-gray-50/95 backdrop-blur px-6 py-5">

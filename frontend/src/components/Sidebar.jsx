@@ -1,4 +1,4 @@
-export default function Sidebar({ page, setPage, user, onLogout, allowedPages = [] }) {
+export default function Sidebar({ page, setPage, user, onLogout, allowedPages = [], unreviewedCount = 0 }) {
   const logoSrc = `${import.meta.env.BASE_URL}logo.png`
   const nav = [
     { id: 'dashboard',   icon: 'fa-tachometer-alt', label: 'Dashboard'         },
@@ -14,6 +14,8 @@ export default function Sidebar({ page, setPage, user, onLogout, allowedPages = 
 
   const initials = (user?.full_name || 'BC')
     .split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+
+  const displayUnreviewed = unreviewedCount > 99 ? '99+' : String(unreviewedCount)
 
   return (
     <div className="sidebar fixed inset-y-0 left-0 z-30 w-64 p-6 flex flex-col overflow-y-auto">
@@ -49,8 +51,15 @@ export default function Sidebar({ page, setPage, user, onLogout, allowedPages = 
               hover:bg-white/10 transition-colors text-left
               ${page === item.id ? 'bg-white/20' : ''}`}
           >
-            <i className={`fas ${item.icon} w-5 text-center`} />
-            <span className="text-sm">{item.label}</span>
+            <div className="flex items-center gap-3 w-full">
+              <i className={`fas ${item.icon} w-5 text-center`} />
+              <span className="text-sm">{item.label}</span>
+              {item.id === 'collisions' && unreviewedCount > 0 && (
+                <span className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-semibold">
+                  {displayUnreviewed}
+                </span>
+              )}
+            </div>
           </button>
         ))}
       </nav>

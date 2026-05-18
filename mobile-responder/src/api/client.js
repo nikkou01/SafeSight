@@ -46,6 +46,11 @@ export async function updateCollisionSeverity(id, severity) {
   return data
 }
 
+export async function updateCollisionType(id, collisionType) {
+  const { data } = await api.put(`/collisions/${id}`, { collision_type: collisionType })
+  return data
+}
+
 export async function fetchAlerts() {
   const { data } = await api.get('/alerts/')
   return data

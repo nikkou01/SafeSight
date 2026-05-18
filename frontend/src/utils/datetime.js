@@ -5,8 +5,11 @@ export function parseApiDate(value) {
   if (!raw) return null
 
   const hasTimezone = /([zZ]|[+\-]\d{2}:\d{2})$/.test(raw)
-  const normalized = hasTimezone ? raw : `${raw}Z`
-  const date = new Date(normalized)
+  let date = new Date(raw)
+
+  if (!hasTimezone && Number.isNaN(date.getTime())) {
+    date = new Date(`${raw}Z`)
+  }
 
   if (Number.isNaN(date.getTime())) return null
   return date
@@ -15,5 +18,13 @@ export function parseApiDate(value) {
 export function formatApiDateTime(value) {
   const date = parseApiDate(value)
   if (!date) return 'N/A'
-  return date.toLocaleString()
+  const formatted = date.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+  return formatted.replace(/\s(AM|PM)$/, '$1')
 }

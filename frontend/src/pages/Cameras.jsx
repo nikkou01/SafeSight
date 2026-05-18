@@ -2,7 +2,103 @@ import { useState } from 'react'
 import { fetchCameras, createCamera, updateCamera, reconnectCamera, deleteCamera } from '../api'
 import useAutoRefresh from '../utils/useAutoRefresh'
 
-const EMPTY = { name: '', location: '', rtsp_url: '', description: '' }
+const DEFAULT_RTSP_PORT = '554'
+const DEFAULT_RTSP_PATH = '/cam/realmonitor?channel=1&subtype=1'
+
+const EMPTY = {
+  name: '',
+  location: '',
+  description: '',
+  rtsp_mode: 'fields',
+  rtsp_username: '',
+  rtsp_password: '',
+  rtsp_host: '',
+  rtsp_port: DEFAULT_RTSP_PORT,
+  rtsp_path: DEFAULT_RTSP_PATH,
+  rtsp_url_raw: '',
+}
+
+function normalizeRtspPath(path) {
+  const trimmed = String(path || '').trim()
+  if (!trimmed) return DEFAULT_RTSP_PATH
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function buildRtspUrl({ username, password, host, port, path }) {
+  const cleanHost = String(host || '').trim()
+  if (!cleanHost) return ''
+  const cleanPort = String(port || DEFAULT_RTSP_PORT).trim()
+  const cleanPath = normalizeRtspPath(path)
+  let auth = ''
+  if (username || password) {
+    const user = encodeURIComponent(username || '')
+    const pass = encodeURIComponent(password || '')
+    auth = `${user}${pass ? `:${pass}` : ''}@`
+  }
+  return `rtsp://${auth}${cleanHost}:${cleanPort}${cleanPath}`
+}
+
+function buildRtspPreview({ username, password, host, port, path }) {
+  const cleanHost = String(host || '').trim()
+  if (!cleanHost) return ''
+  const cleanPort = String(port || DEFAULT_RTSP_PORT).trim()
+  const cleanPath = normalizeRtspPath(path)
+  if (username || password) {
+    const authUser = username || ''
+    const authPass = password ? '****' : ''
+    const auth = `${authUser}${authPass ? `:${authPass}` : ''}@`
+    return `rtsp://${auth}${cleanHost}:${cleanPort}${cleanPath}`
+  }
+  return `rtsp://${cleanHost}:${cleanPort}${cleanPath}`
+}
+
+function parseRtspUrl(rtspUrl) {
+  const raw = String(rtspUrl || '').trim()
+  if (!raw) {
+    return {
+      mode: 'fields',
+      username: '',
+      password: '',
+      host: '',
+      port: DEFAULT_RTSP_PORT,
+      path: DEFAULT_RTSP_PATH,
+      raw: '',
+    }
+  }
+
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'rtsp:') throw new Error('Unsupported RTSP scheme')
+    const path = `${parsed.pathname || ''}${parsed.search || ''}` || DEFAULT_RTSP_PATH
+    return {
+      mode: 'fields',
+      username: safeDecode(parsed.username || ''),
+      password: safeDecode(parsed.password || ''),
+      host: parsed.hostname || '',
+      port: parsed.port || DEFAULT_RTSP_PORT,
+      path: path || DEFAULT_RTSP_PATH,
+      raw,
+    }
+  } catch {
+    return {
+      mode: 'raw',
+      username: '',
+      password: '',
+      host: '',
+      port: DEFAULT_RTSP_PORT,
+      path: DEFAULT_RTSP_PATH,
+      raw,
+    }
+  }
+}
 
 export default function Cameras({ user, notify }) {
   const [cameras,  setCameras]  = useState([])
@@ -38,20 +134,50 @@ export default function Cameras({ user, notify }) {
   }
 
   function openAdd()      { setForm(EMPTY); setEditId(null); setModal('add') }
-  function openEdit(cam)  { setForm({ name: cam.name, location: cam.location, rtsp_url: cam.rtsp_url,
-    description: cam.description || '' });
-    setEditId(cam.id); setModal('edit') }
+  function openEdit(cam)  {
+    const parsed = parseRtspUrl(cam.rtsp_url)
+    setForm({
+      name: cam.name,
+      location: cam.location,
+      description: cam.description || '',
+      rtsp_mode: parsed.mode,
+      rtsp_username: parsed.username,
+      rtsp_password: parsed.password,
+      rtsp_host: parsed.host,
+      rtsp_port: parsed.port,
+      rtsp_path: parsed.path,
+      rtsp_url_raw: parsed.raw,
+    })
+    setEditId(cam.id)
+    setModal('edit')
+  }
   function closeModal()   { setModal(false); setEditId(null); setForm(EMPTY) }
 
   async function handleSave(e) {
     e.preventDefault()
     setSaving(true)
     try {
+      const rtspFields = {
+        username: form.rtsp_username,
+        password: form.rtsp_password,
+        host: form.rtsp_host,
+        port: form.rtsp_port,
+        path: form.rtsp_path,
+      }
+      const rtsp_url = form.rtsp_mode === 'raw'
+        ? String(form.rtsp_url_raw || '').trim()
+        : buildRtspUrl(rtspFields)
+      const payload = {
+        name: form.name,
+        location: form.location,
+        rtsp_url,
+        description: form.description || '',
+      }
       if (modal === 'add') {
-        await createCamera(form)
+        await createCamera(payload)
         notify('Camera added. Validating stream...', 'success')
       } else {
-        await updateCamera(editId, form)
+        await updateCamera(editId, payload)
         notify('Camera updated.', 'success')
       }
       closeModal()
@@ -219,19 +345,149 @@ export default function Cameras({ user, notify }) {
               <button onClick={closeModal}><i className="fas fa-times text-gray-400 hover:text-gray-600" /></button>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
-              {[
-                { label: 'Camera Name',  key: 'name',        type: 'text',   req: true  },
-                { label: 'Location',     key: 'location',    type: 'text',   req: true  },
-                { label: 'RTSP URL',     key: 'rtsp_url',    type: 'text',   req: true  },
-                { label: 'Description',  key: 'description', type: 'text',   req: false },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
-                  <input type={f.type} required={f.req} value={form[f.key]}
-                    onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
-                </div>
-              ))}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Camera Name</label>
+                <input type="text" required value={form.name}
+                  onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                <input type="text" required value={form.location}
+                  onChange={e => setForm(p => ({ ...p, location: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                <div className="text-sm font-medium text-gray-700">CCTV Stream</div>
+
+                {form.rtsp_mode === 'raw' ? (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">RTSP URL</label>
+                      <input
+                        type="text"
+                        required
+                        value={form.rtsp_url_raw}
+                        onChange={e => setForm(p => ({ ...p, rtsp_url_raw: e.target.value }))}
+                        placeholder="rtsp://user:pass@ip:554/stream"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="text-xs text-emerald-700 hover:text-emerald-800"
+                      onClick={() => {
+                        const parsed = parseRtspUrl(form.rtsp_url_raw)
+                        if (parsed.mode !== 'fields') {
+                          notify('Cannot switch to simple input for this RTSP URL.', 'warning')
+                          return
+                        }
+                        setForm(p => ({
+                          ...p,
+                          rtsp_mode: 'fields',
+                          rtsp_username: parsed.username,
+                          rtsp_password: parsed.password,
+                          rtsp_host: parsed.host,
+                          rtsp_port: parsed.port,
+                          rtsp_path: parsed.path,
+                        }))
+                      }}
+                    >
+                      Use simple input
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                        <input
+                          type="text"
+                          required
+                          value={form.rtsp_username}
+                          onChange={e => setForm(p => ({ ...p, rtsp_username: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input
+                          type="password"
+                          required
+                          value={form.rtsp_password}
+                          onChange={e => setForm(p => ({ ...p, rtsp_password: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">IP Address</label>
+                        <input
+                          type="text"
+                          required
+                          value={form.rtsp_host}
+                          onChange={e => setForm(p => ({ ...p, rtsp_host: e.target.value }))}
+                          placeholder="192.168.1.108"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                        <input
+                          type="number"
+                          required
+                          min="1"
+                          max="65535"
+                          value={form.rtsp_port}
+                          onChange={e => setForm(p => ({ ...p, rtsp_port: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-gray-500">
+                      Stream path: {form.rtsp_path}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      RTSP preview: {buildRtspPreview({
+                        username: form.rtsp_username,
+                        password: form.rtsp_password,
+                        host: form.rtsp_host,
+                        port: form.rtsp_port,
+                        path: form.rtsp_path,
+                      }) || 'Complete the fields to generate a URL.'}
+                    </div>
+                    <button
+                      type="button"
+                      className="text-xs text-emerald-700 hover:text-emerald-800"
+                      onClick={() => setForm(p => ({
+                        ...p,
+                        rtsp_mode: 'raw',
+                        rtsp_url_raw: buildRtspUrl({
+                          username: p.rtsp_username,
+                          password: p.rtsp_password,
+                          host: p.rtsp_host,
+                          port: p.rtsp_port,
+                          path: p.rtsp_path,
+                        }),
+                      }))}
+                    >
+                      Edit full RTSP URL
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <input type="text" value={form.description}
+                  onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              </div>
               <div className="flex space-x-3 pt-2">
                 <button type="button" onClick={closeModal}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50">

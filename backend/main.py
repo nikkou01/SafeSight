@@ -1806,7 +1806,6 @@ async def startup():
     app.fs_bucket = AsyncIOMotorGridFSBucket(app.db)
     logger.info(f"Connected to MongoDB: {DB_NAME}")
     await ensure_default_captain(app.db)
-    await ensure_default_responder(app.db)
     await _ensure_collision_reference_data(app.db)
 
     if PREBUFFER_ACTIVE_CAMERAS_ON_STARTUP:
@@ -1980,6 +1979,7 @@ def _build_collision_payload(
     box_docs: Optional[List[dict]] = None,
     status_events: Optional[List[dict]] = None,
     user_map: Optional[dict] = None,
+    sms_summary: Optional[dict] = None,
 ) -> dict:
     camera_name = (camera or {}).get("name") or collision.get("camera_name") or "Unknown"
     camera_location = (camera or {}).get("location") or collision.get("camera_location") or "Unknown"
@@ -2004,6 +2004,19 @@ def _build_collision_payload(
     ack_event = _get_latest_status_event(events, "acknowledged")
     responded_event = _get_latest_status_event(events, "responded")
     resolved_event = _get_latest_status_event(events, "resolved")
+
+    sms_summary = sms_summary or {}
+    sms_total = int(sms_summary.get("total_recipients") or sms_summary.get("total") or 0)
+    sms_sent = int(sms_summary.get("sent") or 0)
+    sms_failed = int(sms_summary.get("failed") or 0)
+    if sms_total <= 0:
+        sms_status = "pending"
+    elif sms_failed > 0:
+        sms_status = "failed"
+    elif sms_sent >= sms_total:
+        sms_status = "sent"
+    else:
+        sms_status = "pending"
 
     payload = {
         "id": collision.get("id"),
@@ -2037,6 +2050,10 @@ def _build_collision_payload(
         "detection_pair_id": detection_payload.get("detection_pair_id"),
         "detection_frame_width": detection_payload.get("detection_frame_width"),
         "detection_frame_height": detection_payload.get("detection_frame_height"),
+        "sms_total_recipients": sms_total,
+        "sms_sent": sms_sent,
+        "sms_failed": sms_failed,
+        "sms_status": sms_status,
     }
 
     payload["video_public_url"] = _make_public_clip_url(
@@ -2085,6 +2102,25 @@ async def _hydrate_collision_payloads(db, collisions: List[dict]) -> List[dict]:
     users = await db.users.find({"id": {"$in": list(user_ids)}}).to_list(None) if user_ids else []
     user_map = {user.get("id"): user for user in users}
 
+    alert_docs = await db.alerts.find({
+        "collision_id": {"$in": collision_ids},
+        "is_test": {"$ne": True},
+    }).to_list(None)
+    sms_summary_by_collision = {}
+    for alert in alert_docs:
+        collision_id = alert.get("collision_id")
+        if not collision_id:
+            continue
+        summary = sms_summary_by_collision.setdefault(
+            collision_id,
+            {"total_recipients": 0, "sent": 0, "failed": 0},
+        )
+        summary["total_recipients"] += 1
+        if str(alert.get("status") or "").lower() == "sent":
+            summary["sent"] += 1
+        else:
+            summary["failed"] += 1
+
     payloads = []
     for collision in collisions:
         collision_id = collision.get("id")
@@ -2099,6 +2135,7 @@ async def _hydrate_collision_payloads(db, collisions: List[dict]) -> List[dict]:
                 box_docs=boxes_by_detection.get(detection_id, []),
                 status_events=events_by_collision.get(collision_id, []),
                 user_map=user_map,
+                sms_summary=sms_summary_by_collision.get(collision_id),
             )
         )
 
@@ -2156,9 +2193,11 @@ def _format_alert_timestamp(ts: str) -> str:
     parsed = _parse_iso_datetime(ts)
     if parsed is None:
         parsed = _utc_now()
-    return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+    localized = parsed.astimezone()
+    hour = localized.strftime("%I").lstrip("0") or "12"
+    return f"{localized.strftime('%B')} {localized.day}, {localized.year}, {hour}:{localized.strftime('%M')}{localized.strftime('%p')}"
 
-def _build_collision_alert_message(collision: dict) -> str:
+def _build_collision_alert_message(collision: dict, include_replay_link: bool = True) -> str:
     timestamp_value = collision.get("timestamp") or collision.get("occurred_at") or ""
     message = (
         "COLLISION ALERT: A collision incident was detected at "
@@ -2167,13 +2206,13 @@ def _build_collision_alert_message(collision: dict) -> str:
         f"{_format_alert_timestamp(timestamp_value)}. "
         "Please review the clip and respond accordingly."
     )
-
-    public_url = collision.get("video_public_url") or _make_public_clip_url(
-        collision.get("id"),
-        collision.get("video_file_id"),
-    )
-    if public_url:
-        message = f"{message}. Replay: {public_url}"
+    if include_replay_link:
+        public_url = collision.get("video_public_url") or _make_public_clip_url(
+            collision.get("id"),
+            collision.get("video_file_id"),
+        )
+        if public_url:
+            message = f"{message}. Replay: {public_url}"
 
     return message
 
@@ -3084,8 +3123,9 @@ def _extract_collision_clip_from_video_sync(
         if duration <= 0:
             return False
         
+        ffmpeg_exe = _resolve_ffmpeg_executable() or "ffmpeg"
         cmd = [
-            "ffmpeg",
+            ffmpeg_exe,
             "-ss", str(start_second),
             "-i", input_path,
             "-t", str(duration),
@@ -3094,7 +3134,7 @@ def _extract_collision_clip_from_video_sync(
             "-c:a", "aac",
             "-q:v", "5",
             "-y",
-            output_path
+            output_path,
         ]
         
         result = subprocess.run(
@@ -3275,17 +3315,6 @@ async def ensure_default_captain(db):
             "created_at": datetime.utcnow().isoformat()
         })
         logger.info("Default captain account created  (user: captain / pass: password)")
-
-async def ensure_default_responder(db):
-    if not await db.users.find_one({"username": "responder"}):
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()), "username": "responder",
-            "email": "responder@safesight.local", "full_name": "Default Responder",
-            "role": "responder", "phone_number": "+639123456780",
-            "is_active": True, "hashed_password": hash_pw("password"),
-            "created_at": datetime.utcnow().isoformat()
-        })
-        logger.info("Default responder account created  (user: responder / pass: password)")
 
 # ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # AUTH
@@ -4150,7 +4179,7 @@ async def simulate_collision_video(
 
         collision_id = str(uuid.uuid4())
         source_camera_id = selected_camera.get("id") if selected_camera else f"simulation-upload:{collision_id}"
-        source_camera_name = selected_camera.get("name") if selected_camera else "Simulation Upload"
+        source_camera_name = selected_camera.get("name") if selected_camera else "Simulated Camera"
         source_camera_location = selected_camera.get("location") if selected_camera else "Uploaded Video"
 
         # Extract collision clip from full video
@@ -4214,6 +4243,8 @@ async def simulate_collision_video(
         collision_doc = {
             "id": collision_id,
             "camera_id": source_camera_id,
+            "camera_name": source_camera_name,
+            "camera_location": source_camera_location,
             "confidence_score": confidence,
             "severity_id": None,
             "type_id": None,
@@ -4474,7 +4505,7 @@ async def _send_alerts(db, collision: dict):
         logger.warning("No active responders to notify for collision %s", collision.get("id"))
         return summary
 
-    msg = _build_collision_alert_message(collision)
+    msg = _build_collision_alert_message(collision, include_replay_link=False)
     for responder in responders:
         send_result = await _send_sms_via_api(responder.get("phone_number", ""), msg)
         stored_message = send_result.get("message_used") or msg
